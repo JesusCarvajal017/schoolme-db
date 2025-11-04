@@ -64,11 +64,12 @@ pipeline {
       steps {
         script {
           def map = [
-            'main'   : [dir: 'environments/main',    svc: 'schoolme-db-main',    envfile: '.env-main',    compose: 'docker-compose.yml'],
-            'staging': [dir: 'environments/staging', svc: 'schoolme-db-staging', envfile: '.env-staging', compose: 'docker-compose.yml'],
-            'qa'     : [dir: 'environments/qa',      svc: 'schoolme-db-qa',      envfile: '.env-qa',      compose: 'docker-compose.yml'],
-            'dev'    : [dir: 'environments/dev',     svc: 'schoolme-db-dev',     envfile: '.env-dev',     compose: 'docker-compose.yml']
-          ]
+            'main'   : [dir: 'environments/main',    svc: 'pg-main',    envfile: '.env-main',    compose: 'docker-compose.yml'],
+            'staging': [dir: 'environments/staging', svc: 'pg-staging', envfile: '.env-staging', compose: 'docker-compose.yml'],
+            'qa'     : [dir: 'environments/qa',      svc: 'pg-qa',      envfile: '.env-qa',      compose: 'docker-compose.yml'],
+            'dev'    : [dir: 'environments/dev',     svc: 'pg-dev',     envfile: '.env-dev',     compose: 'docker-compose.yml']
+            ]
+
           if (!map.containsKey(env.BRANCH_NAME)) {
             error "Branch '${env.BRANCH_NAME}' no está mapeado. Usa main, staging, qa o dev."
           }
