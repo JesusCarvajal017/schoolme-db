@@ -31,6 +31,8 @@ pipeline {
           env.SERVICE   = map[env.BRANCH_NAME].svc
           env.ENV_FILE  = map[env.BRANCH_NAME].envfile
           env.COMPOSE_Y = map[env.BRANCH_NAME].compose
+
+          echo "Branch: ${env.BRANCH_NAME} -> Dir: ${env.ENV_DIR}, Servicio: ${env.SERVICE}"
         }
       }
     }
@@ -40,23 +42,30 @@ pipeline {
         dir("${env.ENV_DIR}") {
           script {
             if (params.RESET_VOLUMES) {
-              sh "docker compose -f ${env.COMPOSE_Y} --env-file ${env.ENV_FILE} down -v || true"
+              sh '''#!/bin/bash
+set -e
+docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
+'''
             }
-            sh """
-                set -euxo pipefail
-                docker compose -f ${env.COMPOSE_Y} --env-file ${env.ENV_FILE} pull ${env.SERVICE} || true
-                docker compose -f ${env.COMPOSE_Y} --env-file ${env.ENV_FILE} up -d ${env.SERVICE}
-                """
-            sh """
-                echo "Esperando a que ${env.SERVICE} esté healthy..."
-                for i in {1..30}; do
-                state=$(docker inspect -f '{{json .State.Health.Status}}' ${env.SERVICE} 2>/dev/null || echo '\"starting\"')
-                echo "Intento $i - Estado: $state"
-                [ "$state" = "\"healthy\"" ] && break
-                sleep 2
-                done
-                docker inspect -f '{{.State.Health.Status}}' ${env.SERVICE}
-                """
+
+            sh '''#!/bin/bash
+set -euxo pipefail
+docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
+docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
+'''
+
+            // Esperar healthcheck usando el nombre EXACTO del contenedor ($SERVICE)
+            sh '''#!/bin/bash
+set -euo pipefail
+echo "Esperando a que $SERVICE esté healthy..."
+for i in {1..30}; do
+  state=$(docker inspect -f '{{json .State.Health.Status}}' "$SERVICE" 2>/dev/null || echo '"starting"')
+  echo "Intento $i - Estado: $state"
+  [[ "$state" == "\"healthy\"" ]] && break
+  sleep 2
+done
+docker inspect -f '{{.State.Health.Status}}' "$SERVICE"
+'''
           }
         }
       }
@@ -66,11 +75,12 @@ pipeline {
       when { expression { return params.SHOW_LOGS } }
       steps {
         dir("${env.ENV_DIR}") {
-          sh """
-            docker compose -f ${env.COMPOSE_Y} --env-file ${env.ENV_FILE} ps
-            echo "---- Logs (${env.SERVICE}) ----"
-            docker compose -f ${env.COMPOSE_Y} --env-file ${env.ENV_FILE} logs --tail=80 ${env.SERVICE} || true
-            """
+          sh '''#!/bin/bash
+set -e
+docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
+echo "---- Logs ($SERVICE) ----"
+docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=80 "$SERVICE" || true
+'''
         }
       }
     }
