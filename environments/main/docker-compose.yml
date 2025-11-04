@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  pg-main:
+    image: ${POSTGRES_IMAGE}
+    container_name: pg-main
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - "10000:5432"
+    volumes:
+      - pgdata-main:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata-main:
