@@ -1,0 +1,66 @@
+services:
+  pg-main:
+    image: postgres:16
+    container_name: pg-main
+    env_file:
+      - ./main/.env-main
+    ports:
+      - "10000:5432"
+    volumes:
+      - pgdata-main:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  pg-staging:
+    image: postgres:16
+    container_name: pg-staging
+    env_file:
+      - ./staging/.env-staging
+    ports:
+      - "10001:5432"
+    volumes:
+      - pgdata-staging:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  pg-qa:
+    image: postgres:16
+    container_name: pg-qa
+    env_file:
+      - ./qa/.env-qa
+    ports:
+      - "10002:5432"
+    volumes:
+      - pgdata-qa:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  pg-dev:
+    image: postgres:16
+    container_name: pg-dev
+    env_file:
+      - ./dev/.env-dev
+    ports:
+      - "10003:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata-main:
+  pgdata-staging:
+  pgdata-qa:
+  pgdata-dev:

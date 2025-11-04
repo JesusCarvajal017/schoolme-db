@@ -13,6 +13,7 @@ pipeline {
   parameters {
     booleanParam(name: 'RESET_VOLUMES', defaultValue: false, description: 'Borrar volúmenes del entorno antes de subir (DB en cero).')
     booleanParam(name: 'SHOW_LOGS',     defaultValue: true,  description: 'Mostrar últimos logs del contenedor.')
+    booleanParam(name: 'RUN_ALL',       defaultValue: false, description: 'Levantar las 4 bases (main, staging, qa, dev) en una sola stack.')
   }
 
   stages {
@@ -68,61 +69,120 @@ pipeline {
             'staging': [dir: 'environments/staging', svc: 'pg-staging', envfile: '.env-staging', compose: 'docker-compose.yml'],
             'qa'     : [dir: 'environments/qa',      svc: 'pg-qa',      envfile: '.env-qa',      compose: 'docker-compose.yml'],
             'dev'    : [dir: 'environments/dev',     svc: 'pg-dev',     envfile: '.env-dev',     compose: 'docker-compose.yml']
-            ]
+          ]
 
-          if (!map.containsKey(env.BRANCH_NAME)) {
-            error "Branch '${env.BRANCH_NAME}' no está mapeado. Usa main, staging, qa o dev."
+          if (!params.RUN_ALL) {
+            if (!map.containsKey(env.BRANCH_NAME)) {
+              error "Branch '${env.BRANCH_NAME}' no está mapeado. Usa main, staging, qa o dev."
+            }
+            env.ENV_DIR   = map[env.BRANCH_NAME].dir
+            env.SERVICE   = map[env.BRANCH_NAME].svc
+            env.ENV_FILE  = map[env.BRANCH_NAME].envfile
+            env.COMPOSE_Y = map[env.BRANCH_NAME].compose
+            echo "Branch: ${env.BRANCH_NAME} -> Dir: ${env.ENV_DIR}, Servicio: ${env.SERVICE}"
+          } else {
+            // modo stack
+            env.ENV_DIR_ALL = 'environments'
+            env.ALL_COMPOSE = 'docker-compose.all.yml'
+            echo "RUN_ALL=true -> Se levantarán pg-main, pg-staging, pg-qa, pg-dev desde ${env.ENV_DIR_ALL}/${env.ALL_COMPOSE}"
           }
-          env.ENV_DIR   = map[env.BRANCH_NAME].dir
-          env.SERVICE   = map[env.BRANCH_NAME].svc
-          env.ENV_FILE  = map[env.BRANCH_NAME].envfile
-          env.COMPOSE_Y = map[env.BRANCH_NAME].compose
-
-          echo "Branch: ${env.BRANCH_NAME} -> Dir: ${env.ENV_DIR}, Servicio: ${env.SERVICE}"
         }
       }
     }
 
     stage('Deploy DB') {
       steps {
-        dir("${env.ENV_DIR}") {
-          script {
+        script {
+          // --- MODO STACK: levantar TODOS a la vez ---
+          if (params.RUN_ALL) {
+            dir("${env.ENV_DIR_ALL}") {
+              if (params.RESET_VOLUMES) {
+                sh '''#!/usr/bin/env bash
+                  set -e
+                  ${COMPOSE_CMD} -f "$ALL_COMPOSE" down -v || true
+                '''
+              }
+
+              sh '''#!/usr/bin/env bash
+                set -euxo pipefail
+                ${COMPOSE_CMD} -f "$ALL_COMPOSE" pull pg-main pg-staging pg-qa pg-dev || true
+                ${COMPOSE_CMD} -f "$ALL_COMPOSE" up -d pg-main pg-staging pg-qa pg-dev
+              '''
+
+              // Esperar health de TODOS usando container ID real
+              sh '''#!/usr/bin/env bash
+                set -euo pipefail
+                services=(pg-main pg-staging pg-qa pg-dev)
+
+                for s in "${services[@]}"; do
+                  cid=$(${COMPOSE_CMD} -f "$ALL_COMPOSE" ps -q "$s")
+                  [ -n "$cid" ] || { echo "No se encontró contenedor para $s"; exit 1; }
+
+                  echo "Esperando a que $s ($cid) esté healthy..."
+                  ok=0
+                  for i in {1..40}; do
+                    state=$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo "starting")
+                    echo "[$s] Intento $i - Estado: $state"
+                    if [[ "$state" == "healthy" ]]; then ok=1; break; fi
+                    sleep 2
+                  done
+                  docker inspect -f '{{.State.Health.Status}}' "$cid" || true
+                  [[ "$ok" == "1" ]] || { echo "Timeout esperando healthcheck de $s"; exit 1; }
+                done
+              '''
+
+              if (params.SHOW_LOGS) {
+                sh '''#!/usr/bin/env bash
+                  set -e
+                  ${COMPOSE_CMD} -f "$ALL_COMPOSE" ps
+                  echo "---- Logs (pg-main) ----";    ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-main    || true
+                  echo "---- Logs (pg-staging) ----"; ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-staging || true
+                  echo "---- Logs (pg-qa) ----";      ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-qa      || true
+                  echo "---- Logs (pg-dev) ----";     ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-dev     || true
+                '''
+              }
+            }
+            return // no sigas con el flujo por servicio
+          }
+          // --- FIN MODO STACK ---
+
+          // --- MODO POR RAMA (tal cual lo tenías) ---
+          dir("${env.ENV_DIR}") {
             if (params.RESET_VOLUMES) {
               sh '''#!/bin/bash
                 set -e
                 ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
-                '''
+              '''
             }
 
             sh '''#!/bin/bash
-                set -euxo pipefail
-                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
-                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
-                '''
+              set -euxo pipefail
+              ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
+              ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
+            '''
 
             // Esperar healthcheck del contenedor (versión corregida)
             sh '''#!/usr/bin/env bash
-                set -euo pipefail
-                # Tomar el container ID si existe; si no, usar el nombre del servicio
-                cid=$(${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps -q "$SERVICE" || true)
-                target="${cid:-$SERVICE}"
+              set -euo pipefail
+              # Tomar el container ID si existe; si no, usar el nombre del servicio
+              cid=$(${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps -q "$SERVICE" || true)
+              target="${cid:-$SERVICE}"
 
-                echo "Esperando a que $target esté healthy..."
-                ok=0
-                for i in {1..30}; do
-                  # OJO: sin json -> healthy/starting/unhealthy sin comillas
-                  state=$(docker inspect -f '{{.State.Health.Status}}' "$target" 2>/dev/null || echo "starting")
-                  echo "Intento $i - Estado: $state"
-                  if [[ "$state" == "healthy" ]]; then ok=1; break; fi
-                  sleep 2
-                done
+              echo "Esperando a que $target esté healthy..."
+              ok=0
+              for i in {1..30}; do
+                state=$(docker inspect -f '{{.State.Health.Status}}' "$target" 2>/dev/null || echo "starting")
+                echo "Intento $i - Estado: $state"
+                if [[ "$state" == "healthy" ]]; then ok=1; break; fi
+                sleep 2
+              done
 
-                docker inspect -f '{{.State.Health.Status}}' "$target" || true
-                if [[ "$ok" != "1" ]]; then
-                  echo "Timeout esperando healthcheck de $target"
-                  exit 1
-                fi
-                '''
+              docker inspect -f '{{.State.Health.Status}}' "$target" || true
+              if [[ "$ok" != "1" ]]; then
+                echo "Timeout esperando healthcheck de $target"
+                exit 1
+              fi
+            '''
           }
         }
       }
@@ -131,13 +191,28 @@ pipeline {
     stage('Status & Logs') {
       when { expression { return params.SHOW_LOGS } }
       steps {
-        dir("${env.ENV_DIR}") {
-          sh '''#!/bin/bash
-            set -e
-            ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
-            echo "---- Logs ($SERVICE) ----"
-            ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=120 "$SERVICE" || true
-            '''
+        script {
+          if (params.RUN_ALL) {
+            dir('environments') {
+              sh '''#!/usr/bin/env bash
+                set -e
+                ${COMPOSE_CMD} -f "$ALL_COMPOSE" ps
+                echo "---- Logs (pg-main) ----";    ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-main    || true
+                echo "---- Logs (pg-staging) ----"; ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-staging || true
+                echo "---- Logs (pg-qa) ----";      ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-qa      || true
+                echo "---- Logs (pg-dev) ----";     ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-dev     || true
+              '''
+            }
+          } else {
+            dir("${env.ENV_DIR}") {
+              sh '''#!/bin/bash
+                set -e
+                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
+                echo "---- Logs ($SERVICE) ----"
+                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=120 "$SERVICE" || true
+              '''
+            }
+          }
         }
       }
     }
@@ -145,7 +220,8 @@ pipeline {
 
   post {
     always {
-      echo "Listo: ${env.BRANCH_NAME} -> ${env.SERVICE}"
+      echo "Listo: ${env.BRANCH_NAME} -> ${ params.RUN_ALL ? 'STACK (pg-main, pg-staging, pg-qa, pg-dev)' : env.SERVICE }"
     }
   }
 }
+
