@@ -8,6 +8,12 @@ pipeline {
   }
 
   stages {
+    stage('Self-check Jenkinsfile') {
+      steps {
+        sh 'nl -ba Jenkinsfile | sed -n "40,70p"'
+      }
+    }
+
     stage('Checkout & Tools') {
       steps {
         checkout scm
@@ -54,7 +60,6 @@ docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
 docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
 '''
 
-            // Esperar healthcheck usando el nombre EXACTO del contenedor ($SERVICE)
             sh '''#!/bin/bash
 set -euo pipefail
 echo "Esperando a que $SERVICE esté healthy..."
