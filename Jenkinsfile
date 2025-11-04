@@ -1,36 +1,63 @@
 pipeline {
   agent any
-  options { timestamps(); ansiColor('xterm') }
+  options {
+    skipDefaultCheckout(true) // evita el checkout anónimo por defecto
+    timestamps()
+    wrap([$class: 'AnsiColorBuildWrapper', colorMapName: 'xterm'])
+  }
+
+  environment {
+    REPO_URL       = 'https://github.com/JesusCarvajal017/schoolme-db.git'
+    GIT_CREDENTIAL = 'github-token' // ID de la credencial (Secret text) en Jenkins
+  }
 
   parameters {
     booleanParam(name: 'RESET_VOLUMES', defaultValue: false, description: 'Borrar volúmenes del entorno antes de subir (DB en cero).')
-    booleanParam(name: 'SHOW_LOGS', defaultValue: true, description: 'Mostrar últimos logs del contenedor.')
+    booleanParam(name: 'SHOW_LOGS',     defaultValue: true,  description: 'Mostrar últimos logs del contenedor.')
   }
 
   stages {
 
-
-
-    stage('Self-check Jenkinsfile') {
-      steps {
-        sh 'nl -ba Jenkinsfile | sed -n "40,70p"'
-      }
-    }
-
     stage('Checkout & Tools') {
       steps {
-        // 🔐 Checkout autenticado con GitHub token
+        // Checkout autenticado (evita rate limit)
         checkout([
           $class: 'GitSCM',
           branches: [[name: "*/${env.BRANCH_NAME}"]],
           userRemoteConfigs: [[
-            url: 'https://github.com/JesusCarvajal017/schoolme-db.git',
-            credentialsId: 'github-token'
+            url: "${env.REPO_URL}",
+            credentialsId: "${env.GIT_CREDENTIAL}"
           ]]
         ])
 
-        // ✅ Verifica herramientas disponibles
-        sh 'docker version && docker compose version'
+        // Detectar docker compose (v2) o docker-compose (v1)
+        script {
+          env.COMPOSE_CMD = sh(
+            script: '''
+              if docker compose version >/dev/null 2>&1; then
+                echo "docker compose"
+              elif command -v docker-compose >/dev/null 2>&1; then
+                echo "docker-compose"
+              else
+                echo ""
+              fi
+            ''',
+            returnStdout: true
+          ).trim()
+          if (!env.COMPOSE_CMD) {
+            error "Docker Compose no está instalado en el agente. Instala el plugin v2 (docker compose) o v1 (docker-compose)."
+          }
+        }
+
+        // Mostrar versiones
+        sh '''
+          set -e
+          docker version
+        '''
+        sh '''
+          set -e
+          ${COMPOSE_CMD} version
+        '''
       }
     }
 
@@ -38,10 +65,10 @@ pipeline {
       steps {
         script {
           def map = [
-            'main'   : [dir: 'environments/main',   svc: 'schoolme-db-main',    envfile: '.env-main',    compose: 'docker-compose.yml'],
-            'staging': [dir: 'environments/staging',svc: 'schoolme-db-staging', envfile: '.env-staging', compose: 'docker-compose.yml'],
-            'qa'     : [dir: 'environments/qa',     svc: 'schoolme-db-qa',      envfile: '.env-qa',      compose: 'docker-compose.yml'],
-            'dev'    : [dir: 'environments/dev',    svc: 'schoolme-db-dev',     envfile: '.env-dev',     compose: 'docker-compose.yml']
+            'main'   : [dir: 'environments/main',    svc: 'schoolme-db-main',    envfile: '.env-main',    compose: 'docker-compose.yml'],
+            'staging': [dir: 'environments/staging', svc: 'schoolme-db-staging', envfile: '.env-staging', compose: 'docker-compose.yml'],
+            'qa'     : [dir: 'environments/qa',      svc: 'schoolme-db-qa',      envfile: '.env-qa',      compose: 'docker-compose.yml'],
+            'dev'    : [dir: 'environments/dev',     svc: 'schoolme-db-dev',     envfile: '.env-dev',     compose: 'docker-compose.yml']
           ]
           if (!map.containsKey(env.BRANCH_NAME)) {
             error "Branch '${env.BRANCH_NAME}' no está mapeado. Usa main, staging, qa o dev."
@@ -62,28 +89,30 @@ pipeline {
           script {
             if (params.RESET_VOLUMES) {
               sh '''#!/bin/bash
-set -e
-docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
-'''
+                    set -e
+                    ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
+                    '''
             }
 
             sh '''#!/bin/bash
-set -euxo pipefail
-docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
-docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
-'''
+                set -euxo pipefail
+                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
+                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
+                '''
 
+            // Esperar healthcheck del contenedor
             sh '''#!/bin/bash
-set -euo pipefail
-echo "Esperando a que $SERVICE esté healthy..."
-for i in {1..30}; do
-  state=$(docker inspect -f '{{json .State.Health.Status}}' "$SERVICE" 2>/dev/null || echo '"starting"')
-  echo "Intento $i - Estado: $state"
-  [[ "$state" == "\"healthy\"" ]] && break
-  sleep 2
-done
-docker inspect -f '{{.State.Health.Status}}' "$SERVICE"
-'''
+                set -euo pipefail
+                echo "Esperando a que $SERVICE esté healthy..."
+                for i in {1..30}; do
+                state=$(docker inspect -f '{{json .State.Health.Status}}' "$SERVICE" 2>/dev/null || echo '"starting"')
+                echo "Intento $i - Estado: $state"
+                [[ "$state" == "\"healthy\"" ]] && ok=1 && break || ok=0
+                sleep 2
+                done
+                docker inspect -f '{{.State.Health.Status}}' "$SERVICE" || true
+                [ "${ok:-0}" = "1" ] || { echo "Timeout esperando healthcheck de $SERVICE"; exit 1; }
+                '''
           }
         }
       }
@@ -94,11 +123,11 @@ docker inspect -f '{{.State.Health.Status}}' "$SERVICE"
       steps {
         dir("${env.ENV_DIR}") {
           sh '''#!/bin/bash
-set -e
-docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
-echo "---- Logs ($SERVICE) ----"
-docker compose -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=80 "$SERVICE" || true
-'''
+            set -e
+            ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
+            echo "---- Logs ($SERVICE) ----"
+            ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=120 "$SERVICE" || true
+            '''
         }
       }
     }
