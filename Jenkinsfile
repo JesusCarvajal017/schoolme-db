@@ -99,7 +99,7 @@ ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
 ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
 '''
 
-            # Esperar healthcheck del contenedor
+            // Esperar healthcheck del contenedor
             sh '''#!/bin/bash
 set -euo pipefail
 echo "Esperando a que $SERVICE esté healthy..."
