@@ -6,8 +6,8 @@ pipeline {
   }
 
   environment {
-    REPO_URL       = 'https://github.com/JesusCarvajal017/schoolme-db.git'
-    GIT_CREDENTIAL = 'github-token' // ID de credencial Global (Secret text con tu PAT)
+    REPO_URL       = 'https://github.com/JesusCarvajal017/schoolme-db'
+    GIT_CREDENTIAL = 'validation_user' // ID de credencial Global (Secret text con tu PAT)
   }
 
   parameters {
