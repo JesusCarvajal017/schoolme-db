@@ -1,14 +1,13 @@
 pipeline {
   agent any
   options {
-    skipDefaultCheckout(true) // evita el checkout anónimo por defecto
+    skipDefaultCheckout(true)   // evita el checkout anónimo por defecto
     timestamps()
-    wrap([$class: 'AnsiColorBuildWrapper', colorMapName: 'xterm'])
   }
 
   environment {
     REPO_URL       = 'https://github.com/JesusCarvajal017/schoolme-db.git'
-    GIT_CREDENTIAL = 'github-token' // ID de la credencial (Secret text) en Jenkins
+    GIT_CREDENTIAL = 'github-token' // ID de credencial Global (Secret text con tu PAT)
   }
 
   parameters {
@@ -20,7 +19,7 @@ pipeline {
 
     stage('Checkout & Tools') {
       steps {
-        // Checkout autenticado (evita rate limit)
+        // 🔐 Checkout autenticado (evita rate limit)
         checkout([
           $class: 'GitSCM',
           branches: [[name: "*/${env.BRANCH_NAME}"]],
@@ -45,7 +44,7 @@ pipeline {
             returnStdout: true
           ).trim()
           if (!env.COMPOSE_CMD) {
-            error "Docker Compose no está instalado en el agente. Instala el plugin v2 (docker compose) o v1 (docker-compose)."
+            error "Docker Compose no está instalado en el agente. Instala 'docker compose' (plugin v2) o 'docker-compose' (v1)."
           }
         }
 
@@ -89,30 +88,31 @@ pipeline {
           script {
             if (params.RESET_VOLUMES) {
               sh '''#!/bin/bash
-                    set -e
-                    ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
-                    '''
+set -e
+${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
+'''
             }
 
             sh '''#!/bin/bash
-                set -euxo pipefail
-                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
-                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
-                '''
+set -euxo pipefail
+${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
+${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
+'''
 
-            // Esperar healthcheck del contenedor
+            # Esperar healthcheck del contenedor
             sh '''#!/bin/bash
-                set -euo pipefail
-                echo "Esperando a que $SERVICE esté healthy..."
-                for i in {1..30}; do
-                state=$(docker inspect -f '{{json .State.Health.Status}}' "$SERVICE" 2>/dev/null || echo '"starting"')
-                echo "Intento $i - Estado: $state"
-                [[ "$state" == "\"healthy\"" ]] && ok=1 && break || ok=0
-                sleep 2
-                done
-                docker inspect -f '{{.State.Health.Status}}' "$SERVICE" || true
-                [ "${ok:-0}" = "1" ] || { echo "Timeout esperando healthcheck de $SERVICE"; exit 1; }
-                '''
+set -euo pipefail
+echo "Esperando a que $SERVICE esté healthy..."
+ok=0
+for i in {1..30}; do
+  state=$(docker inspect -f '{{json .State.Health.Status}}' "$SERVICE" 2>/dev/null || echo '"starting"')
+  echo "Intento $i - Estado: $state"
+  if [[ "$state" == "\"healthy\"" ]]; then ok=1; break; fi
+  sleep 2
+done
+docker inspect -f '{{.State.Health.Status}}' "$SERVICE" || true
+[ "$ok" = "1" ] || { echo "Timeout esperando healthcheck de $SERVICE"; exit 1; }
+'''
           }
         }
       }
@@ -123,11 +123,11 @@ pipeline {
       steps {
         dir("${env.ENV_DIR}") {
           sh '''#!/bin/bash
-            set -e
-            ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
-            echo "---- Logs ($SERVICE) ----"
-            ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=120 "$SERVICE" || true
-            '''
+set -e
+${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
+echo "---- Logs ($SERVICE) ----"
+${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=120 "$SERVICE" || true
+'''
         }
       }
     }
