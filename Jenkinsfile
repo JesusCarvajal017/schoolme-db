@@ -8,6 +8,9 @@ pipeline {
   }
 
   stages {
+
+
+
     stage('Self-check Jenkinsfile') {
       steps {
         sh 'nl -ba Jenkinsfile | sed -n "40,70p"'
@@ -16,7 +19,17 @@ pipeline {
 
     stage('Checkout & Tools') {
       steps {
-        checkout scm
+        // 🔐 Checkout autenticado con GitHub token
+        checkout([
+          $class: 'GitSCM',
+          branches: [[name: "*/${env.BRANCH_NAME}"]],
+          userRemoteConfigs: [[
+            url: 'https://github.com/JesusCarvajal017/schoolme-db.git',
+            credentialsId: 'github-token'
+          ]]
+        ])
+
+        // ✅ Verifica herramientas disponibles
         sh 'docker version && docker compose version'
       }
     }
