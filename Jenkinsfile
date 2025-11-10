@@ -8,6 +8,7 @@ pipeline {
   environment {
     REPO_URL       = 'https://github.com/JesusCarvajal017/schoolme-db'
     GIT_CREDENTIAL = 'validation_user' // ID de credencial Global (Secret text con tu PAT)
+    STACK_NAME     = 'schoolme-db'
   }
 
   parameters {
@@ -99,14 +100,14 @@ pipeline {
               if (params.RESET_VOLUMES) {
                 sh '''#!/usr/bin/env bash
                   set -e
-                  ${COMPOSE_CMD} -f "$ALL_COMPOSE" down -v || true
+                  ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" down -v || true
                 '''
               }
 
               sh '''#!/usr/bin/env bash
                 set -euxo pipefail
-                ${COMPOSE_CMD} -f "$ALL_COMPOSE" pull pg-main pg-staging pg-qa pg-dev || true
-                ${COMPOSE_CMD} -f "$ALL_COMPOSE" up -d pg-main pg-staging pg-qa pg-dev
+                ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" pull pg-main pg-staging pg-qa pg-dev || true
+                ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" up -d pg-main pg-staging pg-qa pg-dev
               '''
 
               // Esperar health de TODOS usando container ID real
@@ -115,7 +116,7 @@ pipeline {
                 services=(pg-main pg-staging pg-qa pg-dev)
 
                 for s in "${services[@]}"; do
-                  cid=$(${COMPOSE_CMD} -f "$ALL_COMPOSE" ps -q "$s")
+                  cid=$(${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" ps -q "$s")
                   [ -n "$cid" ] || { echo "No se encontró contenedor para $s"; exit 1; }
 
                   echo "Esperando a que $s ($cid) esté healthy..."
@@ -134,11 +135,11 @@ pipeline {
               if (params.SHOW_LOGS) {
                 sh '''#!/usr/bin/env bash
                   set -e
-                  ${COMPOSE_CMD} -f "$ALL_COMPOSE" ps
-                  echo "---- Logs (pg-main) ----";    ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-main    || true
-                  echo "---- Logs (pg-staging) ----"; ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-staging || true
-                  echo "---- Logs (pg-qa) ----";      ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-qa      || true
-                  echo "---- Logs (pg-dev) ----";     ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=60 pg-dev     || true
+                  ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" ps
+                  echo "---- Logs (pg-main) ----";    ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=60 pg-main    || true
+                  echo "---- Logs (pg-staging) ----"; ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=60 pg-staging || true
+                  echo "---- Logs (pg-qa) ----";      ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=60 pg-qa      || true
+                  echo "---- Logs (pg-dev) ----";     ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=60 pg-dev     || true
                 '''
               }
             }
@@ -151,21 +152,21 @@ pipeline {
             if (params.RESET_VOLUMES) {
               sh '''#!/bin/bash
                 set -e
-                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
+                ${COMPOSE_CMD} -p "$STACK_NAME" -f "$COMPOSE_Y" --env-file "$ENV_FILE" down -v || true
               '''
             }
 
             sh '''#!/bin/bash
               set -euxo pipefail
-              ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
-              ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
+              ${COMPOSE_CMD} -p "$STACK_NAME" -f "$COMPOSE_Y" --env-file "$ENV_FILE" pull "$SERVICE" || true
+              ${COMPOSE_CMD} -p "$STACK_NAME" -f "$COMPOSE_Y" --env-file "$ENV_FILE" up -d "$SERVICE"
             '''
 
             // Esperar healthcheck del contenedor (versión corregida)
             sh '''#!/usr/bin/env bash
               set -euo pipefail
               # Tomar el container ID si existe; si no, usar el nombre del servicio
-              cid=$(${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps -q "$SERVICE" || true)
+              cid=$(${COMPOSE_CMD} -p "$STACK_NAME" -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps -q "$SERVICE" || true)
               target="${cid:-$SERVICE}"
 
               echo "Esperando a que $target esté healthy..."
@@ -196,20 +197,20 @@ pipeline {
             dir('environments') {
               sh '''#!/usr/bin/env bash
                 set -e
-                ${COMPOSE_CMD} -f "$ALL_COMPOSE" ps
-                echo "---- Logs (pg-main) ----";    ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-main    || true
-                echo "---- Logs (pg-staging) ----"; ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-staging || true
-                echo "---- Logs (pg-qa) ----";      ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-qa      || true
-                echo "---- Logs (pg-dev) ----";     ${COMPOSE_CMD} -f "$ALL_COMPOSE" logs --tail=120 pg-dev     || true
+                ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" ps
+                echo "---- Logs (pg-main) ----";    ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=120 pg-main    || true
+                echo "---- Logs (pg-staging) ----"; ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=120 pg-staging || true
+                echo "---- Logs (pg-qa) ----";      ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=120 pg-qa      || true
+                echo "---- Logs (pg-dev) ----";     ${COMPOSE_CMD} -p "$STACK_NAME" -f "$ALL_COMPOSE" logs --tail=120 pg-dev     || true
               '''
             }
           } else {
             dir("${env.ENV_DIR}") {
               sh '''#!/bin/bash
                 set -e
-                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
+                ${COMPOSE_CMD} -p "$STACK_NAME" -f "$COMPOSE_Y" --env-file "$ENV_FILE" ps
                 echo "---- Logs ($SERVICE) ----"
-                ${COMPOSE_CMD} -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=120 "$SERVICE" || true
+                ${COMPOSE_CMD} -p "$STACK_NAME" -f "$COMPOSE_Y" --env-file "$ENV_FILE" logs --tail=120 "$SERVICE" || true
               '''
             }
           }
